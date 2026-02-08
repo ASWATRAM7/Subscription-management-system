@@ -1,0 +1,478 @@
+// Subscription Management ERP - Database Schema
+// Comprehensive schema covering all modules
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+enum UserRole {
+  ADMIN
+  INTERNAL_USER
+  CUSTOMER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  role      UserRole @default(CUSTOMER)
+  isActive  Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  
+  // Relations
+  customer                Customer?
+  paymentsCreated         Payment[]
+  quotationTemplates      QuotationTemplate[]
+  invoices                Invoice[]
+  
+  @@index([email])
+  @@index([role])
+}
+
+// ============================================
+// PRODUCT MANAGEMENT
+// ============================================
+
+enum ProductType {
+  SERVICE
+  CONSUMABLE
+  STORABLE
+}
+
+model Product {
+  id          String      @id @default(cuid())
+  name        String
+  type        ProductType @default(SERVICE)
+  description String?
+  salesPrice  Float
+  costPrice   Float
+  isActive    Boolean     @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  variants              ProductVariant[]
+  subscriptionLines     SubscriptionLine[]
+  templateLines         TemplateLine[]
+  invoiceLines          InvoiceLine[]
+  discountProducts      DiscountProduct[]
+  
+  @@index([name])
+  @@index([isActive])
+}
+
+model ProductVariant {
+  id         String  @id @default(cuid())
+  productId  String
+  attribute  String  // e.g., "Brand", "Size", "Color"
+  value      String  // e.g., "Odoo", "Large", "Red"
+  extraPrice Float   @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  @@index([productId])
+}
+
+// ============================================
+// RECURRING PLAN MANAGEMENT
+// ============================================
+
+enum BillingPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+model RecurringPlan {
+  id              String        @id @default(cuid())
+  name            String
+  price           Float
+  billingPeriod   BillingPeriod
+  minimumQuantity Int           @default(1)
+  startDate       DateTime?
+  endDate         DateTime?
+  
+  // Plan Options
+  autoClose  Boolean @default(false)
+  closable   Boolean @default(true)
+  pausable   Boolean @default(true)
+  renewable  Boolean @default(true)
+  
+  isActive Boolean @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  subscriptions      Subscription[]
+  quotationTemplates QuotationTemplate[]
+  
+  @@index([name])
+  @@index([isActive])
+}
+
+// ============================================
+// QUOTATION TEMPLATES
+// ============================================
+
+model QuotationTemplate {
+  id               String   @id @default(cuid())
+  name             String
+  validityDays     Int      @default(30)
+  recurringPlanId  String
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  
+  // Relations
+  recurringPlan RecurringPlan  @relation(fields: [recurringPlanId], references: [id])
+  user          User?          @relation(fields: [createdBy], references: [id])
+  lines         TemplateLine[]
+  
+  @@index([name])
+}
+
+model TemplateLine {
+  id         String  @id @default(cuid())
+  templateId String
+  productId  String
+  quantity   Int     @default(1)
+  unitPrice  Float
+  
+  createdAt DateTime @default(now())
+  
+  // Relations
+  template QuotationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  product  Product           @relation(fields: [productId], references: [id])
+  
+  @@index([templateId])
+}
+
+// ============================================
+// SUBSCRIPTION MANAGEMENT
+// ============================================
+
+enum SubscriptionStatus {
+  DRAFT
+  QUOTATION
+  CONFIRMED
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum PaymentTerms {
+  IMMEDIATE
+  DAYS_15
+  DAYS_30
+  DAYS_45
+  DAYS_60
+  END_OF_MONTH
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  subscriptionNumber String             @unique
+  customerId         String
+  planId             String
+  status             SubscriptionStatus @default(DRAFT)
+  
+  startDate      DateTime
+  expirationDate DateTime
+  paymentTerms   PaymentTerms @default(DAYS_30)
+  
+  notes String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  customer  Customer                @relation(fields: [customerId], references: [id])
+  plan      RecurringPlan           @relation(fields: [planId], references: [id])
+  lines     SubscriptionLine[]
+  invoices  Invoice[]
+  discounts DiscountSubscription[]
+  
+  @@index([subscriptionNumber])
+  @@index([customerId])
+  @@index([status])
+}
+
+model SubscriptionLine {
+  id             String  @id @default(cuid())
+  subscriptionId String
+  productId      String
+  quantity       Int     @default(1)
+  unitPrice      Float
+  
+  createdAt DateTime @default(now())
+  
+  // Relations
+  subscription Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  product      Product           @relation(fields: [productId], references: [id])
+  taxes        SubscriptionLineTax[]
+  
+  @@index([subscriptionId])
+}
+
+model SubscriptionLineTax {
+  id                   String @id @default(cuid())
+  subscriptionLineId   String
+  taxId                String
+  
+  // Relations
+  subscriptionLine SubscriptionLine @relation(fields: [subscriptionLineId], references: [id], onDelete: Cascade)
+  tax              Tax              @relation(fields: [taxId], references: [id])
+  
+  @@index([subscriptionLineId])
+}
+
+// ============================================
+// CUSTOMER (Extended User)
+// ============================================
+
+model Customer {
+  id            String  @id @default(cuid())
+  userId        String  @unique
+  companyName   String?
+  phone         String?
+  address       String?
+  city          String?
+  state         String?
+  country       String?
+  postalCode    String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  
+  @@index([userId])
+}
+
+// ============================================
+// INVOICE MANAGEMENT
+// ============================================
+
+enum InvoiceStatus {
+  DRAFT
+  CONFIRMED
+  PAID
+  CANCELLED
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  invoiceNumber  String        @unique
+  customerId     String
+  subscriptionId String?
+  status         InvoiceStatus @default(DRAFT)
+  
+  invoiceDate DateTime @default(now())
+  dueDate     DateTime
+  
+  subtotal       Float @default(0)
+  taxAmount      Float @default(0)
+  discountAmount Float @default(0)
+  totalAmount    Float @default(0)
+  
+  notes String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  
+  // Relations
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  user         User?         @relation(fields: [createdBy], references: [id])
+  lines        InvoiceLine[]
+  payments     Payment[]
+  
+  @@index([invoiceNumber])
+  @@index([customerId])
+  @@index([status])
+}
+
+model InvoiceLine {
+  id        String @id @default(cuid())
+  invoiceId String
+  productId String
+  quantity  Int    @default(1)
+  unitPrice Float
+  
+  createdAt DateTime @default(now())
+  
+  // Relations
+  invoice Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id])
+  taxes   InvoiceLineTax[]
+  
+  @@index([invoiceId])
+}
+
+model InvoiceLineTax {
+  id            String @id @default(cuid())
+  invoiceLineId String
+  taxId         String
+  taxAmount     Float
+  
+  // Relations
+  invoiceLine InvoiceLine @relation(fields: [invoiceLineId], references: [id], onDelete: Cascade)
+  tax         Tax         @relation(fields: [taxId], references: [id])
+  
+  @@index([invoiceLineId])
+}
+
+// ============================================
+// PAYMENT MANAGEMENT
+// ============================================
+
+enum PaymentMethod {
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  BANK_TRANSFER
+  UPI
+  WALLET
+  CHEQUE
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  invoiceId     String
+  amount        Float
+  paymentMethod PaymentMethod
+  paymentDate   DateTime      @default(now())
+  
+  reference String?
+  notes     String?
+  
+  createdAt DateTime @default(now())
+  createdBy String?
+  
+  // Relations
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+  user    User?   @relation(fields: [createdBy], references: [id])
+  
+  @@index([invoiceId])
+  @@index([paymentDate])
+}
+
+// ============================================
+// TAX MANAGEMENT
+// ============================================
+
+enum TaxType {
+  PERCENTAGE
+  FIXED
+}
+
+model Tax {
+  id          String  @id @default(cuid())
+  name        String
+  type        TaxType @default(PERCENTAGE)
+  rate        Float   // Percentage or fixed amount
+  description String?
+  isActive    Boolean @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  invoiceLineTaxes       InvoiceLineTax[]
+  subscriptionLineTaxes  SubscriptionLineTax[]
+  
+  @@index([name])
+  @@index([isActive])
+}
+
+// ============================================
+// DISCOUNT MANAGEMENT
+// ============================================
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
+model Discount {
+  id              String       @id @default(cuid())
+  name            String
+  code            String       @unique
+  type            DiscountType
+  value           Float        // Fixed amount or percentage
+  minimumPurchase Float        @default(0)
+  minimumQuantity Int          @default(1)
+  startDate       DateTime
+  endDate         DateTime?
+  limitUsage      Int?         // NULL = unlimited
+  currentUsage    Int          @default(0)
+  isActive        Boolean      @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  products      DiscountProduct[]
+  subscriptions DiscountSubscription[]
+  
+  @@index([name])
+  @@index([code])
+  @@index([isActive])
+}
+
+model DiscountProduct {
+  id         String @id @default(cuid())
+  discountId String
+  productId  String
+  
+  // Relations
+  discount Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  @@unique([discountId, productId])
+  @@index([discountId])
+  @@index([productId])
+}
+
+model DiscountSubscription {
+  id             String @id @default(cuid())
+  discountId     String
+  subscriptionId String
+  
+  // Relations
+  discount     Discount     @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  
+  @@unique([discountId, subscriptionId])
+  @@index([discountId])
+  @@index([subscriptionId])
+}
